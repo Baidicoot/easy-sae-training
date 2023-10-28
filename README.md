@@ -38,3 +38,10 @@ Again, some of these flags have useful defaults.
 ### Output Format
 
 Dictionaries are outputted as instances of the `TiedSAE` class in a list of tuples of hyperparameter settings and the dictionary itself.
+
+### Example Usage
+
+```
+python generate_test_data.py --model="EleutherAI/pythia-70m-deduped" --layers 2 --n_chunks=2
+python basic_l1_sweep.py --dataset_dir="activation_data/layer_2" --output_dir="output_basic_test" --ratio=8 --batch_size=4096 --n_repetitions=2 --save_after_every
+```
