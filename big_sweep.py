@@ -15,7 +15,6 @@ import tqdm
 from transformer_lens import HookedTransformer
 from transformers import GPT2Tokenizer
 
-import standard_metrics
 import wandb
 from activation_dataset import (check_transformerlens_model,
                                 get_activation_size, setup_data)
@@ -77,83 +76,8 @@ def format_hyperparam_val(val):
     else:
         return str(val)
 
-
 def make_hyperparam_name(setting):
     return "_".join([f"{k}_{format_hyperparam_val(v)}" for k, v in setting.items()])
-
-
-def log_standard_metrics(learned_dicts, chunk, chunk_num, hyperparam_ranges, cfg):
-    n_samples = 2000
-    sample_indexes = np.random.choice(len(chunk), size=n_samples, replace=False)
-    sample = chunk[sample_indexes]
-
-    grid_hyperparams = [k for k in hyperparam_ranges.keys() if k not in ["l1_alpha", "dict_size"]]
-    mmcs_plot_settings = []
-    for setting in product(*[hyperparam_ranges[hp] for hp in grid_hyperparams]):
-        mmcs_plot_settings.append({hp: val for hp, val in zip(grid_hyperparams, setting)})
-
-    l1_values = hyperparam_ranges["l1_alpha"]
-    dict_sizes = hyperparam_ranges["dict_size"]
-
-    n_actives_log = {}
-    for learned_dict, setting in learned_dicts:
-        name = make_hyperparam_name(setting)
-        n_ever_active = standard_metrics.batched_calc_feature_n_ever_active(learned_dict, sample, threshold=1)
-        n_actives_log[name + "_n_active"] = n_ever_active
-        n_actives_log[name + "_prop_active"] = n_ever_active / learned_dict.n_feats
-
-    cfg.wandb_instance.log(n_actives_log, commit=True)
-
-    if len(dict_sizes) > 1:
-        small_dict_size = dict_sizes[0]
-
-        mmcs_grid_plots = {}
-
-        for setting in mmcs_plot_settings:
-            mmcs_scores = np.zeros((len(l1_values), len(dict_sizes)))
-
-            for i, l1_value in enumerate(l1_values):
-                small_dict_setting_ = setting.copy()
-                small_dict_setting_["l1_alpha"] = l1_value
-                small_dict_setting_["dict_size"] = small_dict_size
-
-                small_dict = filter_learned_dicts(learned_dicts, small_dict_setting_)[0][0]
-
-                for j, dict_size in enumerate(dict_sizes[1:]):
-                    setting_ = setting.copy()
-                    setting_["l1_alpha"] = l1_value
-                    setting_["dict_size"] = dict_size
-
-                    larger_dict = filter_learned_dicts(learned_dicts, setting_)[0][0]
-                    mmcs_scores[i, j] = standard_metrics.mcs_duplicates(small_dict, larger_dict).mean().item()
-
-            mmcs_grid_plots[make_hyperparam_name(setting)] = standard_metrics.plot_grid(
-                mmcs_scores,
-                l1_values,
-                dict_sizes[1:],
-                "l1_alpha",
-                "dict_size",
-                cmap="viridis",
-            )
-
-    sparsity_hists = {}
-
-    for learned_dict, setting in learned_dicts:
-        sparsity_hists[make_hyperparam_name(setting)] = standard_metrics.plot_hist(
-            standard_metrics.mean_nonzero_activations(learned_dict, sample),
-            "Mean nonzero activations",
-            "Frequency",
-            bins=20,
-        )
-
-    if cfg.use_wandb:
-        if len(dict_sizes) > 1:
-            for k, plot in mmcs_grid_plots.items():
-                cfg.wandb_instance.log({f"mmcs_grid_{chunk_num}/{k}": wandb.Image(plot)}, commit=False)
-
-        for k, plot in sparsity_hists.items():
-            cfg.wandb_instance.log({f"sparsity_hist_{chunk_num}/{k}": wandb.Image(plot)})
-
 
 def ensemble_train_loop(ensemble, cfg, args, ensemble_name, sampler, dataset, progress_counter):
     torch.set_grad_enabled(False)
@@ -372,9 +296,6 @@ def sweep(ensemble_init_func, cfg):
             learned_dicts.extend(unstacked_to_learned_dicts(ensemble, arg, cfg.ensemble_hyperparams, cfg.buffer_hyperparams))
 
         print(i, chunk_idx)
-        if cfg.wandb_images and i % 10 == 0:
-            print("logging images")
-            log_standard_metrics(learned_dicts, chunk, i, hyperparam_ranges, cfg)
 
         del chunk
         if i == len(chunk_order) - 1 or (i + 1) in [2**j for j in range(3, 10)]:
