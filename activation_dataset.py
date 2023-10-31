@@ -337,27 +337,19 @@ def make_activation_dataset(
 def make_activation_dataset_tl(
     sentence_dataset: DataLoader,
     model: HookedTransformer,
-    activation_width: int,
-    dataset_folders: List[str],
-    layers: List[int] = [2],
-    tensor_loc: str = "residual",
-    chunk_size_gb: float = 2,
+    output_folder: str,
+    tensor_names: List[str],
+    chunk_size: int,
     device: torch.device = torch.device("cuda:0"),
     n_chunks: int = 1,
     max_length: int = 256,
     model_batch_size: int = 4,
     skip_chunks: int = 0,
-    center_dataset: bool = False
 ):
     with torch.no_grad():
-        chunk_size = chunk_size_gb * (2**30)  # 2GB
-        activation_size = (
-            activation_width * 2 * model_batch_size * max_length
-        )  # 3072 mlp activations, 2 bytes per half, 1024 context window
-        max_batches_per_chunk = int(chunk_size // activation_size)
-        if center_dataset:
-            chunk_means = {}
-            chunk_stds = {}
+        max_batches_per_chunk = chunk_size // (model_batch_size * max_length)
+        
+        print(max_batches_per_chunk)
 
         batches_to_skip = skip_chunks * max_batches_per_chunk
 
@@ -368,39 +360,57 @@ def make_activation_dataset_tl(
         for _ in range(batches_to_skip):
             dataset_iterator.__next__()
 
+        try:
+            os.makedirs(output_folder, exist_ok=False)
+        except FileExistsError:
+            print(f"Folder {output_folder} already exists, skipping...")
+            return
+
+        for tensor_name in tensor_names:
+            os.makedirs(os.path.join(output_folder, tensor_name))
+
         for chunk_idx in range(n_chunks):
-            datasets: Dict[int, List] = {layer: [] for layer in layers}
+            datasets: Dict[str, List] = {tensor_name: [] for tensor_name in tensor_names}
             for batch_idx, batch in tqdm(enumerate(dataset_iterator)):
                 batch = batch["input_ids"].to(device)
-                _, cache = model.run_with_cache(batch, stop_at_layer=max(layers) + 1)
-                for layer in layers:
-                    tensor_name = make_tensor_name(layer, tensor_loc, model.cfg.model_name)
+                n_activations += batch.shape[0] * batch.shape[1]
+                _, cache = model.run_with_cache(batch)
+                for tensor_name in tensor_names:
                     activation_data = cache[tensor_name].to(torch.float16)
-                    if tensor_loc == "attn_concat":
-                        activation_data = rearrange(activation_data, "b s n d -> (b s) (n d)")
-                    else:
-                        activation_data = rearrange(activation_data, "b s n -> (b s) n")
-                    if layer == layers[0]:
-                        n_activations += activation_data.shape[0]
-                    datasets[layer].append(activation_data)
+                    activation_data = rearrange(activation_data, "b l ... -> (b l) (...)")
+                    datasets[tensor_name].append(activation_data)
+
+                if batch_idx == 0 and chunk_idx == 0:
+                    tensor_sizes: Dict[str, int] = {}
+                    gen_cfg_path = os.path.join(output_folder, "gen_cfg.json")
+                    
+                    for tensor_name in tensor_names:
+                        tensor_sizes[tensor_name] = datasets[tensor_name][0].shape[-1]
+                    
+                    with open(gen_cfg_path, "w") as f:
+                        gen_cfg = {
+                            "chunk_size": chunk_size,
+                            "n_chunks": n_chunks,
+                            "max_length": max_length,
+                            "model_batch_size": model_batch_size,
+                            "precision": "float16",
+                            "shuffle_seed": None,
+                            "tensor_sizes": tensor_sizes,
+                        }
+                        json.dump(gen_cfg, f)
 
                 if batch_idx >= max_batches_per_chunk:
                     break
 
-            for layer, folder in zip(layers, dataset_folders):
-                dataset = datasets[layer]
-                if center_dataset:
-                    if chunk_idx == 0:
-                        chunk_means[layer] = torch.mean(torch.cat(dataset), dim=0)
-                        chunk_stds[layer] = torch.std(torch.cat(dataset), dim=0)
-                    dataset = [(x - chunk_means[layer]) / chunk_stds[layer] for x in dataset]
-                save_activation_chunk(dataset, chunk_idx, folder)
+            for tensor_name in tensor_names:
+                dataset = datasets[tensor_name]
+                save_activation_chunk(dataset, chunk_idx, os.path.join(output_folder, tensor_name))
 
-            if len(datasets[layer]) < max_batches_per_chunk:
-                print(f"Saved undersized chunk {chunk_idx} of activations, total size: {batch_idx * activation_size}")
+            if len(datasets[tensor_name]) < max_batches_per_chunk:
+                print(f"Saved undersized chunk {chunk_idx} of activations, total activations: {n_activations}")
                 break
             else:
-                print(f"Saved chunk {chunk_idx} of activations, total size: {(chunk_idx + 1) * batch_idx * activation_size}")
+                print(f"Saved chunk {chunk_idx} of activations, total activations: {n_activations}")
     
     #return ((chunk_means, chunk_stds) if center_dataset else None, n_activations)
     return n_activations
@@ -600,16 +610,13 @@ def setup_data(
             center_dataset=center_dataset,
         )
     else:
-        dataset_folder = [dataset_folder] if isinstance(dataset_folder, str) else dataset_folder
         n_datapoints = make_activation_dataset_tl(
             sentence_dataset=token_loader,
             model=model,
-            activation_width=activation_width,
-            dataset_folders=dataset_folder,
-            chunk_size_gb=chunk_size_gb,
+            output_folder=str(dataset_folder),
+            tensor_names=tensor_names,
+            chunk_size=1024 * 1024,
             device=device,
-            layers=[layer] if isinstance(layer, int) else layer,
-            tensor_loc=layer_loc,
             n_chunks=n_chunks,
             max_length=MAX_SENTENCE_LEN,
             model_batch_size=MODEL_BATCH_SIZE,

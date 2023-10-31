@@ -1,5 +1,5 @@
 # Easy SAE Training
-Easy Sparse Linear Autoencoder (https://arxiv.org/abs/2309.08600) training, with data generated from TransformerLens models.
+Easy Sparse Linear Autoencoder (https://arxiv.org/abs/2309.08600) training, with data generated from TransformerLens models. This code represents a simplification of the codebase actually used in the paper, and is designed significantly better and is much more readable. The legacy code is available in the `main` branch.
 
 ## Usage
 
@@ -10,12 +10,10 @@ Hopefully all the neccesary packages should be in `requirements.txt`.
 To sample activations, run `generate_test_data.py` with the flags
 - `--model [str]` to specify which model to use (using TransformerLens naming)
 - `--n_chunks [int]` to specify how many chunks (files containing activations) to generate
-- `--chunk_size_gb [float]` to specify the size of the chunks in GB
+- `--chunk_size [int]` to specify the size of the chunks in activations
 - `--dataset [str]` to specify the HuggingFace dataset to run on
-- `--location ['residual'|'mlp'|'attn'|'attn_concat'|'mlpout']` to specify which activation to sample (`'attn_concat'` refers to the attention output before the output linear layer - i.e. concatenated output of heads - and `'mlpout'` refers to the output of the MLP after the output linear layer)
-- `--layers [list of int]` to specify which layers to sample at
+- `--locations [str]` to specify which activation to sample, using `TransformerLens` hook naming.
 - `--dataset_folder [str]` to specify the output folder
-- `--layer_folder_fmt [str]` to specify a format string for per-layer subfolders
 - `--device [str]` to specify a PyTorch device to run the model on
 
 Some of these flags have useful defaults, which you can see in the python file.
@@ -37,7 +35,11 @@ Again, some of these flags have useful defaults.
 
 ### Output Format
 
-Dictionaries are outputted as instances of the `TiedSAE` class in a list of tuples of hyperparameter settings and the dictionary itself.
+Trained SAEs are outputted as instances of the `SparseLinearAutoencoder` class (defined in `training/dictionary.py`), as a dictionary indexed by `l1_penalty`.
+
+### Ensembling
+
+Internally, the sweeps over L1 penalty ranges are implemented using a model ensembler defined in `training/ensemble.py`. It should be robust to most modifications of autoencoder architecture, but you might have to fiddle with it if you make strange changes.
 
 ### Example Usage
 

@@ -1,135 +1,186 @@
-import torch
-import torchopt
+import training.dictionary as sae
+
+import json
+
 import numpy as np
-
-from big_sweep import ensemble_train_loop, unstacked_to_learned_dicts
-
-from autoencoders.sae_ensemble import FunctionalTiedSAE
-from autoencoders.ensemble import FunctionalEnsemble
-
-import os
+import torch
+from torchtyping import TensorType
+import random
 import tqdm
+
+import wandb
+
+import argparse
 
 from utils import dotdict
 
-class ProgressBarCursed:
-    def __init__(self, total, chunk_idx, n_chunks, epoch_idx, n_repetitions):
-        if n_repetitions > 1:
-            desc = "Epoch {}/{} - Chunk {}/{}".format(epoch_idx+1, n_repetitions, chunk_idx+1, n_chunks)
-        else:
-            desc = "Chunk {}/{}".format(chunk_idx+1, n_chunks)
+# can and probably should write a wrapper for state management
+# but at that point, what's the difference between this and the old code?
+# maybe this is _slightly_ more readable? is that worth it? idk probably not
+def train_models(train_cfg: dotdict, dataset_cfg: dict, files_cfg: dotdict, log_cfg: dotdict):
+    needs_precision_cast = dataset_cfg["precision"] == "float16"
 
-        self.bar = tqdm.tqdm(total=total, desc=desc)
-        self._value = 0
+    activation_size = dataset_cfg["tensor_sizes"][train_cfg.tensor_name]
+    latent_dim = activation_size * train_cfg.blowup_ratio
+
+    if train_cfg.l1_penalty_spacing == "log":
+        l1_range = list(np.logspace(train_cfg.min_l1_penalty, train_cfg.max_l1_penalty, train_cfg.n_models))
+    elif train_cfg.l1_penalty_spacing == "linear":
+        l1_range = list(np.linspace(train_cfg.min_l1_penalty, train_cfg.max_l1_penalty, train_cfg.n_models))
     
-    @property
-    def value(self):
-        return self._value
+    if train_cfg.train_unsparse_baseline:
+        l1_range.append(0)
     
-    @value.setter
-    def value(self, v):
-        self.bar.update(v - self._value)
-        self._value = v
+    #l1_range = [0.0001]
 
-def basic_l1_sweep(
-    dataset_dir, output_dir,
-    ratio, l1_values=np.logspace(-4, -2, 16), batch_size=256,
-    device="cuda", adam_kwargs={"lr": 1e-3},
-    n_repetitions=1,
-    save_after_every=False, 
-):
-    # get dataset size
-    
-    # check that dataset_dir/0.pt exists
-
-    assert os.path.exists(os.path.join(dataset_dir, '0.pt')), "Dataset not found at {}".format(dataset_dir)
-
-    dataset = torch.load(os.path.join(dataset_dir, '0.pt'))
-    activation_dim = dataset.shape[1]
-    latent_dim = int(activation_dim * ratio)
-    del dataset
-
-    # create models
-
-    print(f"Initializing {len(l1_values)} models with latent dimension {latent_dim}...")
-
-    models = [FunctionalTiedSAE.init(activation_dim, latent_dim, l1, device=device) for l1 in l1_values]
-    ensemble = FunctionalEnsemble(
-        models, FunctionalTiedSAE,
-        torchopt.adam, adam_kwargs,
-        device=device
+    ensemble = sae.make_ensemble(
+        activation_size, latent_dim, l1_range, {"lr": train_cfg.adam_lr},
+        device=train_cfg.device,
+        activation=train_cfg.activation,
     )
-    args = {
-        "batch_size": batch_size,
-        "device": device,
-        "dict_size": latent_dim,
-    }
 
-    print("Training...")
+    #model = sae.SparseLinearAutoencoder(activation_size, latent_dim, 0.0001, device=train_cfg.device, dtype=torch.float64)
 
-    n_chunks = len(os.listdir(dataset_dir))
+    #optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg.adam_lr)
 
-    os.makedirs(output_dir, exist_ok=True)
+    torch.manual_seed(0)
+    np.random.seed(0)
+    random.seed(0)
 
-    for epoch_idx in range(n_repetitions):
-        chunk_order = np.random.permutation(n_chunks)
+    if log_cfg.track_dead_feats is not None:
+        activation_counts = torch.zeros(len(l1_range), latent_dim, dtype=torch.long, device=train_cfg.device)
+        steps_since_last_check = 0
 
-        for chunk_idx, chunk in enumerate(chunk_order):
-            assert os.path.exists(os.path.join(dataset_dir, '{}.pt'.format(chunk))), "Chunk not found at {}".format(os.path.join(dataset_dir, '{}.pt'.format(chunk)))
-            dataset = torch.load(os.path.join(dataset_dir, '{}.pt'.format(chunk))).to(dtype=torch.float32)
-            dataset.pin_memory()
+    for epoch in range(train_cfg.n_epochs):
+        print(f"Epoch {epoch}")
 
-            sampler = torch.utils.data.BatchSampler(
-                torch.utils.data.RandomSampler(range(dataset.shape[0])),
-                batch_size=batch_size,
-                drop_last=False,
+        chunk_idxs = np.arange(dataset_cfg["n_chunks"])
+        np.random.shuffle(chunk_idxs)
+
+        for chunk in chunk_idxs:
+            dataset = torch.load(f"{files_cfg.dataset_folder}/{train_cfg.tensor_name}/{chunk}.pt")
+
+            if needs_precision_cast:
+                dataset = dataset.to(torch.float32)
+
+            dataloader = torch.utils.data.DataLoader(
+                dataset, batch_size=train_cfg.batch_size, shuffle=True
             )
 
-            bar = ProgressBarCursed(len(sampler), chunk_idx, n_chunks, epoch_idx, n_repetitions)
+            for batch in tqdm.tqdm(dataloader):
+                batch = batch.to(train_cfg.device)
 
-            cfg = dotdict({
-                "use_wandb": False,
-            })
+                loss, mse, hiddens, x_hat, bias_norm, center_norm = ensemble.step_batch(batch)
 
-            ensemble_train_loop(ensemble, cfg, args, "ensemble", sampler, dataset, bar)
+                if files_cfg.wandb_config is not None:
+                    sparsities: TensorType["_n_models"]
+                    sparsities = hiddens.abs().gt(train_cfg.nonzero_eps).float().sum(dim=-1).mean(dim=1)
 
-            if save_after_every:
-                learned_dicts = unstacked_to_learned_dicts(ensemble, args, ["dict_size"], ["l1_alpha"])
-            
-                torch.save(learned_dicts, os.path.join(output_dir, f"learned_dicts_epoch_{epoch_idx}_chunk_{chunk_idx}.pt"))
-        
-        if not save_after_every:
-            learned_dicts = unstacked_to_learned_dicts(ensemble, args, ["dict_size"], ["l1_alpha"])
-        
-            torch.save(learned_dicts, os.path.join(output_dir, f"learned_dicts_epoch_{epoch_idx}.pt"))
+                    if log_cfg.track_dead_feats is not None:
+                        activation_counts += hiddens.abs().gt(train_cfg.nonzero_eps).sum(dim=1).long()
+                        steps_since_last_check += 1
+
+                        if steps_since_last_check > log_cfg.track_dead_feats:
+                            dead_feats = (activation_counts == 0).sum(dim=1)
+                            wandb.log({
+                                "dead_feats": {l1: dead_feats[i].item() for i, l1 in enumerate(l1_range)}
+                            }, commit=True)
+                            activation_counts = torch.zeros_like(activation_counts)
+                            steps_since_last_check = 0
+
+                    wandb.log({
+                        "loss": {l1: loss[i].item() for i, l1 in enumerate(l1_range)},
+                        "mse": {l1: mse[i].item() for i, l1 in enumerate(l1_range)},
+                        "sparsity": {l1: sparsities[i].item() for i, l1 in enumerate(l1_range)},
+                        "bias_norm": {l1: bias_norm[i].item() for i, l1 in enumerate(l1_range)},
+                        "center_norm": {l1: center_norm[i].item() for i, l1 in enumerate(l1_range)},
+                    }, commit=True)
+    
+    models = ensemble.unstack()
+
+    model_dict = {model.l1_penalty.item(): model for model in models}
+
+    torch.save(model_dict, files_cfg.save_location)
 
 if __name__ == "__main__":
-    import argparse
+    parser = argparse.ArgumentParser()
 
-    parser = argparse.ArgumentParser(description="Train an ensemble of SAEs with different L1 penalties.")
-
-    parser.add_argument("--dataset_dir", type=str, help="Path to directory containing dataset chunks.")
-    parser.add_argument("--output_dir", type=str, help="Path to directory to save learned dictionaries.")
-    parser.add_argument("--ratio", type=float, help="Ratio of latent to activation dimension.")
-    parser.add_argument("--l1_value_min", type=float, default=-4, help="Minimum L1 penalty value (log base 10).")
-    parser.add_argument("--l1_value_max", type=float, default=-2, help="Maximum L1 penalty value (log base 10).")
-    parser.add_argument("--l1_value_n", type=int, default=16, help="Number of L1 penalty values to try.")
-    parser.add_argument("--batch_size", type=int, default=256, help="Batch size.")
-    parser.add_argument("--device", type=str, default="cuda", help="Device to use.")
-    parser.add_argument("--adam_lr", type=float, default=1e-3, help="Adam learning rate.")
-    parser.add_argument("--n_repetitions", type=int, default=1, help="Number of epochs to train for.")
-    parser.add_argument("--save_after_every", action="store_true", help="Save learned dictionaries after every chunk instead of every epoch.")
+    parser.add_argument("--dataset_folder", type=str, default="activation_data")
+    parser.add_argument("--tensor_name", type=str, default="activations")
+    parser.add_argument("--blowup_ratio", type=int, default=8)
+    parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--batch_size", type=int, default=512)
+    parser.add_argument("--n_epochs", type=int, default=1)
+    parser.add_argument("--min_l1_penalty", type=float, default=-4)
+    parser.add_argument("--max_l1_penalty", type=float, default=-2)
+    parser.add_argument("--l1_penalty_spacing", type=str, default="log")
+    parser.add_argument("--n_models", type=int, default=10)
+    parser.add_argument("--activation", type=str, default="relu")
+    parser.add_argument("--train_unsparse_baseline", action="store_true")
+    parser.add_argument("--nonzero_eps", type=float, default=1e-7)
+    parser.add_argument("--adam_lr", type=float, default=1e-4)
+    parser.add_argument("--save_location", type=str, default="models.pt")
+    parser.add_argument("--wandb_config", type=str, default="secrets/wandb_cfg.json")
+    parser.add_argument("--track_dead_feats", type=int, default=None)
+    parser.add_argument("--load_config", type=str, default=None)
+    parser.add_argument("--save_config", type=str, default=None)
 
     args = parser.parse_args()
+    
+    with open(f"{args.dataset_folder}/gen_cfg.json", "r") as f:
+        dataset_cfg = json.load(f)
 
-    #l1_values = list(np.logspace(args.l1_value_min, args.l1_value_max, args.l1_value_n))
+    train_cfg = dotdict({
+        "tensor_name": args.tensor_name,
+        "blowup_ratio": args.blowup_ratio,
+        "device": args.device,
+        "batch_size": args.batch_size,
+        "n_epochs": args.n_epochs,
+        "min_l1_penalty": args.min_l1_penalty,
+        "max_l1_penalty": args.max_l1_penalty,
+        "l1_penalty_spacing": args.l1_penalty_spacing,
+        "n_models": args.n_models,
+        "train_unsparse_baseline": args.train_unsparse_baseline,
+        "activation": args.activation,
+        "nonzero_eps": args.nonzero_eps,
+        "adam_lr": args.adam_lr,
+    })
 
-    l1_values = [0, 1e-3, 3e-4, 1e-4]
+    log_cfg = dotdict({
+        "track_dead_feats": args.track_dead_feats,
+    })
 
-    basic_l1_sweep(
-        args.dataset_dir, args.output_dir,
-        args.ratio, l1_values, args.batch_size,
-        args.device, {"lr": args.adam_lr},
-        args.n_repetitions,
-        args.save_after_every
-    )
+    files_cfg = dotdict({
+        "dataset_folder": args.dataset_folder,
+        "save_location": args.save_location,
+        "wandb_config": args.wandb_config,
+        "load_config": args.load_config,
+        "save_config": args.save_config,
+    })
+
+    if files_cfg.load_config is not None:
+        with open(files_cfg.load_config, "r") as f:
+            train_cfg = dotdict(json.load(f))
+
+    if files_cfg.save_config is not None:
+        with open(files_cfg.save_config, "w") as f:
+            json.dump(train_cfg.__dict__, f)
+
+    # initialize wandb
+    if files_cfg.wandb_config is not None:
+        with open(files_cfg.wandb_config, "r") as f:
+            wandb_cfg = json.load(f)
+        wandb.login(key=wandb_cfg["api_key"])
+
+        import datetime
+        now = datetime.datetime.now()
+        timestr = now.strftime("%Y-%m-%d_%H-%M")
+
+        wandb.init(
+            project=wandb_cfg["project"],
+            entity=wandb_cfg["entity"],
+            config=args.__dict__,
+            name=f"{wandb_cfg['run_name']}_{timestr}"
+        )
+
+    train_models(train_cfg, dataset_cfg, files_cfg, log_cfg)
