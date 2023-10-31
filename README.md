@@ -1,5 +1,5 @@
 # Easy SAE Training
-Easy Sparse Linear Autoencoder (https://arxiv.org/abs/2309.08600) training, with data generated from TransformerLens models. This code represents a simplification of the codebase actually used in the paper, and is designed significantly better and is much more readable. The legacy code is available in the `main` branch.
+Easy Sparse Linear Autoencoder (https://arxiv.org/abs/2309.08600) training, with data generated from TransformerLens models. This code represents a simplification of the codebase actually used in the paper, and is designed significantly better and is much more readable. The legacy code is available in the `legacy` branch.
 
 ## Usage
 
