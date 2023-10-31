@@ -1,3 +1,5 @@
+WARNING: THIS CODE IS VERY BAD, A BETTER AND MORE READABLE VERSION IS AVAILABLE IN THE BRANCH `better_internals`. IDEALLY USE THAT ONE, AND NOT THIS.
+
 # Easy SAE Training
 Easy Sparse Linear Autoencoder (https://arxiv.org/abs/2309.08600) training, with data generated from TransformerLens models.
 
