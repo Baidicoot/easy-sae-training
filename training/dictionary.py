@@ -30,6 +30,9 @@ class SparseLinearAutoencoder(nn.Module):
         self.encoder = nn.Parameter(torch.empty((n_dict_components, activation_size), device=device, dtype=dtype))
         nn.init.xavier_uniform_(self.encoder)
 
+        self.decoder = nn.Parameter(torch.empty((n_dict_components, activation_size), device=device, dtype=dtype))
+        self.decoder.copy_(self.encoder)
+
         self.encoder_bias = nn.Parameter(torch.empty((n_dict_components,), device=device, dtype=dtype))
         nn.init.zeros_(self.encoder_bias)
 
@@ -44,12 +47,12 @@ class SparseLinearAutoencoder(nn.Module):
     def forward(self, batch):
         batch_ = batch - self.center[None, :]
 
-        decoder_norms = torch.norm(self.encoder, 2, dim=-1)
-        learned_dict = self.encoder / torch.clamp(decoder_norms, 1e-8)[:, None]
-
-        c = torch.einsum("nd,bd->bn", learned_dict, batch_)
+        c = torch.einsum("nd,bd->bn", self.encoder, batch_)
         c = c + self.encoder_bias[None, :]
         c = self.act(c)
+
+        decoder_norms = torch.norm(self.decoder, 2, dim=-1)
+        learned_dict = self.decoder / torch.clamp(decoder_norms, 1e-8)[:, None]
 
         x_hat_ = torch.einsum("nd,bn->bd", learned_dict, c)
 
