@@ -10,7 +10,7 @@ class Ensemble:
     def __init__(
         self,
         models: List[torch.nn.Module],
-        optimizer_func: Type[torchopt.Optimizer],
+        optimizer_func: Type[torchopt.base.GradientTransformation],
         optimizer_kwargs: Dict[str, Any],
         model_hyperparams: Dict[str, Any],
         device: Optional[Union[str, torch.device]] = None,
