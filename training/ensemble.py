@@ -34,7 +34,24 @@ class Ensemble:
         self.init_functions()
 
     def init_functions(self):
-        def call_single_model(params, buffers, batch):
+        """
+        Initializes functions for a unified backward pass of ensemble models.
+
+        - `self.calc_grads(params, buffers, batch)`:
+            Args:
+                params, buffers (Dict[str, Any]): Tensors dictionary; first dimension is ensemble dimension.
+                batch: Single data batch.
+            Returns:
+                grads, outputs (Dict[str, Any]): Gradients and model outputs, both with ensemble dimension first.
+
+        - `self.update(grads, opt_state)`:
+            Vectorized `update()` from `Optimizer` in `torchopt`.
+            Args:
+                grads, opt_state (Dict[str, Any]): Tensors dictionary; first dimension is ensemble dimension.
+            Returns:
+                updates, new_opt_state (Dict[str, Any]): Updated tensors and optimizer state; ensemble dimension first.
+        """
+
             outputs = functional_call(self.sig, (params, buffers), batch)
             return outputs[0], outputs
 
