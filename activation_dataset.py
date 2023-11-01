@@ -40,7 +40,7 @@ CHUNK_SIZE_GB = 2.0
 MAX_SENTENCE_LEN = 256
 
 
-def check_use_baukit(model_name):
+def check_use_baukit(model_name: str):
     if model_name in ["nanoGPT"]:
         return True
     elif check_transformerlens_model(model_name):
@@ -141,7 +141,7 @@ def make_sentence_dataset(dataset_name: str, max_lines: int = 20_000, start_line
                 os.system("unzstd pile0.zst")
         dataset = Dataset.from_list(list(read_from_pile("pile0", max_lines=max_lines, start_line=start_line)))
     else:
-        dataset = load_dataset(dataset_name, split="train")#, split=f"train[{start_line}:{start_line + max_lines}]")
+        dataset = load_dataset(dataset_name, split="train")  # , split=f"train[{start_line}:{start_line + max_lines}]")
     return dataset
 
 
@@ -286,7 +286,7 @@ def make_activation_dataset(
     n_chunks: int = 1,
     max_length: int = 256,
     model_batch_size: int = 4,
-    center_dataset: bool = False
+    center_dataset: bool = False,
 ) -> pd.DataFrame:
     print(f"Running model and saving activations to {dataset_folder}")
     with torch.no_grad():
@@ -304,7 +304,9 @@ def make_activation_dataset(
                 with Trace(model, tensor_name) as ret:
                     _ = model(batch)
                     mlp_activation_data = ret.output
-                    mlp_activation_data = rearrange(mlp_activation_data, "b s n -> (b s) n").to(torch.float16).to(device)
+                    mlp_activation_data = (
+                        rearrange(mlp_activation_data, "b s n -> (b s) n").to(torch.float16).to(device)
+                    )
                     mlp_activation_data = nn.functional.gelu(mlp_activation_data)
             else:
                 _, cache = model.run_with_cache(batch, stop_at_layer=layer + 1)
@@ -320,7 +322,7 @@ def make_activation_dataset(
                         chunk_mean = torch.mean(torch.cat(dataset), dim=0)
                         chunk_std = torch.std(torch.cat(dataset), dim=0)
                     dataset = [(x - chunk_mean) / chunk_std for x in dataset]
-                    
+
                 # Need to save, restart the list
                 save_activation_chunk(dataset, n_saved_chunks, dataset_folder)
                 n_saved_chunks += 1
@@ -331,7 +333,9 @@ def make_activation_dataset(
 
         if n_saved_chunks < n_chunks:
             save_activation_chunk(dataset, n_saved_chunks, dataset_folder)
-            print(f"Saved undersized chunk {n_saved_chunks} of activations, total size:  {batch_idx * activation_size} ")
+            print(
+                f"Saved undersized chunk {n_saved_chunks} of activations, total size:  {batch_idx * activation_size} "
+            )
 
 
 def make_activation_dataset_tl(
@@ -348,7 +352,7 @@ def make_activation_dataset_tl(
 ):
     with torch.no_grad():
         max_batches_per_chunk = chunk_size // (model_batch_size * max_length)
-        
+
         print(max_batches_per_chunk)
 
         batches_to_skip = skip_chunks * max_batches_per_chunk
@@ -383,10 +387,10 @@ def make_activation_dataset_tl(
                 if batch_idx == 0 and chunk_idx == 0:
                     tensor_sizes: Dict[str, int] = {}
                     gen_cfg_path = os.path.join(output_folder, "gen_cfg.json")
-                    
+
                     for tensor_name in tensor_names:
                         tensor_sizes[tensor_name] = datasets[tensor_name][0].shape[-1]
-                    
+
                     with open(gen_cfg_path, "w") as f:
                         gen_cfg = {
                             "chunk_size": chunk_size,
@@ -411,9 +415,10 @@ def make_activation_dataset_tl(
                 break
             else:
                 print(f"Saved chunk {chunk_idx} of activations, total activations: {n_activations}")
-    
-    #return ((chunk_means, chunk_stds) if center_dataset else None, n_activations)
+
+    # return ((chunk_means, chunk_stds) if center_dataset else None, n_activations)
     return n_activations
+
 
 def make_activation_dataset_hf(
     sentence_dataset: Dataset,
@@ -457,7 +462,7 @@ def make_activation_dataset_hf(
 
         for _ in range(batches_to_skip):
             dataloader_iter.__next__()
-        
+
         # configure hooks for the model
         tensor_buffer: Dict[str, Any] = {}
 
@@ -496,36 +501,39 @@ def make_activation_dataset_hf(
 
             progress_bar.update(model_batch_size)
 
-            if batch_idx+1 % chunk_batches == 0:
+            if batch_idx + 1 % chunk_batches == 0:
                 for tensor_name in tensor_names:
-                    save_activation_chunk(tensor_buffer[tensor_name], chunk_idx, os.path.join(output_folder, tensor_name))
-                
+                    save_activation_chunk(
+                        tensor_buffer[tensor_name], chunk_idx, os.path.join(output_folder, tensor_name)
+                    )
+
                 n_act = batch_idx * model_batch_size * max_length
                 print(f"Saved chunk {chunk_idx} of activations, total size: {n_act / 1e6:.2f}M activations")
 
                 chunk_idx += 1
-                
+
                 reset_buffers()
                 if chunk_idx >= n_chunks:
                     break
-        
+
         # undersized final chunk
         if chunk_idx < n_chunks:
             for tensor_name in tensor_names:
                 save_activation_chunk(tensor_buffer[tensor_name], chunk_idx, os.path.join(output_folder, tensor_name))
-            
+
             n_act = batch_idx * model_batch_size * max_length
             print(f"Saved undersized chunk {chunk_idx} of activations, total size: {n_act / 1e6:.2f}M activations")
 
         for hook_handle in hook_handles:
             hook_handle.remove()
-        
 
-def save_activation_chunk(dataset, n_saved_chunks, dataset_folder):
+
+def save_activation_chunk(dataset: List[torch.Tensor], n_saved_chunks: int, dataset_folder: str):
     dataset_t = torch.cat(dataset, dim=0).to("cpu")
     os.makedirs(dataset_folder, exist_ok=True)
     with open(dataset_folder + "/" + str(n_saved_chunks) + ".pt", "wb") as f:
         torch.save(dataset_t, f)
+
 
 def setup_data_new(
     model_name: str,
@@ -566,9 +574,10 @@ def setup_data_new(
         shuffle_seed=shuffle_seed,
     )
 
+
 def setup_data(
-    tokenizer,
-    model,
+    tokenizer: PreTrainedTokenizerBase,
+    model: HookedTransformer,
     dataset_name: str,  # Name of dataset to load
     dataset_folder: Union[str, List[str]],  # Folder to save activations to
     layer: Union[int, List[int]] = 2,
@@ -590,7 +599,9 @@ def setup_data(
 
     sentence_dataset = make_sentence_dataset(dataset_name, max_lines=max_lines, start_line=start_line)
     tensor_names = [make_tensor_name(layer, layer_loc, model.cfg.model_name) for layer in layers]
-    tokenized_sentence_dataset, bits_per_byte = chunk_and_tokenize(sentence_dataset, tokenizer, max_length=MAX_SENTENCE_LEN)
+    tokenized_sentence_dataset, bits_per_byte = chunk_and_tokenize(
+        sentence_dataset, tokenizer, max_length=MAX_SENTENCE_LEN
+    )
     token_loader = DataLoader(tokenized_sentence_dataset, batch_size=MODEL_BATCH_SIZE, shuffle=True)
     if baukit:
         assert type(dataset_folder) == str, "Baukit only supports single dataset folder"
@@ -623,10 +634,3 @@ def setup_data(
             skip_chunks=skip_chunks,
         )
         return n_datapoints
-
-
-def setup_token_data(cfg, tokenizer, model):
-    sentence_dataset = make_sentence_dataset(cfg.dataset_name)
-    tokenized_sentence_dataset, bits_per_byte = chunk_and_tokenize(sentence_dataset, tokenizer, max_length=cfg.max_length)
-    token_loader = DataLoader(tokenized_sentence_dataset, batch_size=cfg.model_batch_size, shuffle=True)
-    return token_loader

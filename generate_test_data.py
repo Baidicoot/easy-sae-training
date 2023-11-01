@@ -30,13 +30,13 @@ if __name__ == "__main__":
         model = HookedTransformer.from_pretrained(args.model, device=args.device)
         tokenizer = AutoTokenizer.from_pretrained(args.model)
 
-        #layer_folders = [args.layer_folder_fmt.format(layer=layer) for layer in args.layers]
+        # layer_folders = [args.layer_folder_fmt.format(layer=layer) for layer in args.layers]
 
-        #os.makedirs(args.dataset_folder, exist_ok=True)
-        #for layer_folder in layer_folders:
+        # os.makedirs(args.dataset_folder, exist_ok=True)
+        # for layer_folder in layer_folders:
         #    os.makedirs(os.path.join(args.dataset_folder, layer_folder), exist_ok=True)
-        
-        #dataset_folders = [os.path.join(args.dataset_folder, layer_folder) for layer_folder in layer_folders]
+
+        # dataset_folders = [os.path.join(args.dataset_folder, layer_folder) for layer_folder in layer_folders]
 
         activation_dataset.setup_data(
             tokenizer,
