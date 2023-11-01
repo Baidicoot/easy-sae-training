@@ -48,7 +48,7 @@ def parse_args() -> dotdict:
     parser.add_argument("--datasets_folder", type=str, default="activation_data")
     parser.add_argument("--center_dataset", type=bool, default=False)
     parser.add_argument("--n_chunks", type=int, default=30)
-    parser.add_argument("--chunk_size_gb", type=float, default=2.)
+    parser.add_argument("--chunk_size_gb", type=float, default=2.0)
     parser.add_argument(
         "--threshold", type=float, default=0.9
     )  # When looking for matching features across dicts, what is the threshold for a match
@@ -59,7 +59,9 @@ def parse_args() -> dotdict:
         "--mini_runs", type=int, default=1
     )  # How many times to run the inner loop, each time with a different random subset o f the data
     parser.add_argument("--save_after_mini", type=bool, default=False)  # Whether to save the model after each mini run
-    parser.add_argument("--upload_to_aws", type=bool, default=False)  # Whether to upload the model to aws after each mini run
+    parser.add_argument(
+        "--upload_to_aws", type=bool, default=False
+    )  # Whether to upload the model to aws after each mini run
     parser.add_argument("--n_repetitions", type=int, default=1)  # How many times to repeat the whole process
 
     parser.add_argument("--refresh_data", type=bool, default=False)  # Whether to remake the dataset after each mini run
@@ -80,7 +82,9 @@ def parse_args() -> dotdict:
     parser.add_argument(
         "--use_decoder", type=bool, default=True
     )  # whether to use the transposed decoder instead of encoder in a non-tied ae
-    parser.add_argument("--df_n_feats", type=int, default=200)  # number of features to use in dataframe, if 0 then use all
+    parser.add_argument(
+        "--df_n_feats", type=int, default=200
+    )  # number of features to use in dataframe, if 0 then use all
     parser.add_argument("--top_k_pca", type=int, default=50)  # enforced max active pca components
 
     parser.add_argument("--device", type=str, default="cuda:0")

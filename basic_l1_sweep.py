@@ -14,6 +14,7 @@ import argparse
 
 from utils import dotdict
 
+
 # can and probably should write a wrapper for state management
 # but at that point, what's the difference between this and the old code?
 # maybe this is _slightly_ more readable? is that worth it? idk probably not
@@ -27,21 +28,24 @@ def train_models(train_cfg: dotdict, dataset_cfg: dict, files_cfg: dotdict, log_
         l1_range = list(np.logspace(train_cfg.min_l1_penalty, train_cfg.max_l1_penalty, train_cfg.n_models))
     elif train_cfg.l1_penalty_spacing == "linear":
         l1_range = list(np.linspace(train_cfg.min_l1_penalty, train_cfg.max_l1_penalty, train_cfg.n_models))
-    
+
     if train_cfg.train_unsparse_baseline:
         l1_range.append(0)
-    
-    #l1_range = [0.0001]
+
+    # l1_range = [0.0001]
 
     ensemble = sae.make_ensemble(
-        activation_size, latent_dim, l1_range, {"lr": train_cfg.adam_lr},
+        activation_size,
+        latent_dim,
+        l1_range,
+        {"lr": train_cfg.adam_lr},
         device=train_cfg.device,
         activation=train_cfg.activation,
     )
 
-    #model = sae.SparseLinearAutoencoder(activation_size, latent_dim, 0.0001, device=train_cfg.device, dtype=torch.float64)
+    # model = sae.SparseLinearAutoencoder(activation_size, latent_dim, 0.0001, device=train_cfg.device, dtype=torch.float64)
 
-    #optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg.adam_lr)
+    # optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg.adam_lr)
 
     torch.manual_seed(0)
     np.random.seed(0)
@@ -63,9 +67,7 @@ def train_models(train_cfg: dotdict, dataset_cfg: dict, files_cfg: dotdict, log_
             if needs_precision_cast:
                 dataset = dataset.to(torch.float32)
 
-            dataloader = torch.utils.data.DataLoader(
-                dataset, batch_size=train_cfg.batch_size, shuffle=True
-            )
+            dataloader = torch.utils.data.DataLoader(dataset, batch_size=train_cfg.batch_size, shuffle=True)
 
             for batch in tqdm.tqdm(dataloader):
                 batch = batch.to(train_cfg.device)
@@ -82,25 +84,29 @@ def train_models(train_cfg: dotdict, dataset_cfg: dict, files_cfg: dotdict, log_
 
                         if steps_since_last_check > log_cfg.track_dead_feats:
                             dead_feats = (activation_counts == 0).sum(dim=1)
-                            wandb.log({
-                                "dead_feats": {l1: dead_feats[i].item() for i, l1 in enumerate(l1_range)}
-                            }, commit=True)
+                            wandb.log(
+                                {"dead_feats": {l1: dead_feats[i].item() for i, l1 in enumerate(l1_range)}}, commit=True
+                            )
                             activation_counts = torch.zeros_like(activation_counts)
                             steps_since_last_check = 0
 
-                    wandb.log({
-                        "loss": {l1: loss[i].item() for i, l1 in enumerate(l1_range)},
-                        "mse": {l1: mse[i].item() for i, l1 in enumerate(l1_range)},
-                        "sparsity": {l1: sparsities[i].item() for i, l1 in enumerate(l1_range)},
-                        "bias_norm": {l1: bias_norm[i].item() for i, l1 in enumerate(l1_range)},
-                        "center_norm": {l1: center_norm[i].item() for i, l1 in enumerate(l1_range)},
-                    }, commit=True)
-    
+                    wandb.log(
+                        {
+                            "loss": {l1: loss[i].item() for i, l1 in enumerate(l1_range)},
+                            "mse": {l1: mse[i].item() for i, l1 in enumerate(l1_range)},
+                            "sparsity": {l1: sparsities[i].item() for i, l1 in enumerate(l1_range)},
+                            "bias_norm": {l1: bias_norm[i].item() for i, l1 in enumerate(l1_range)},
+                            "center_norm": {l1: center_norm[i].item() for i, l1 in enumerate(l1_range)},
+                        },
+                        commit=True,
+                    )
+
     models = ensemble.unstack()
 
     model_dict = {model.l1_penalty.item(): model for model in models}
 
     torch.save(model_dict, files_cfg.save_location)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -126,37 +132,43 @@ if __name__ == "__main__":
     parser.add_argument("--save_config", type=str, default=None)
 
     args = parser.parse_args()
-    
+
     with open(f"{args.dataset_folder}/gen_cfg.json", "r") as f:
         dataset_cfg = json.load(f)
 
-    train_cfg = dotdict({
-        "tensor_name": args.tensor_name,
-        "blowup_ratio": args.blowup_ratio,
-        "device": args.device,
-        "batch_size": args.batch_size,
-        "n_epochs": args.n_epochs,
-        "min_l1_penalty": args.min_l1_penalty,
-        "max_l1_penalty": args.max_l1_penalty,
-        "l1_penalty_spacing": args.l1_penalty_spacing,
-        "n_models": args.n_models,
-        "train_unsparse_baseline": args.train_unsparse_baseline,
-        "activation": args.activation,
-        "nonzero_eps": args.nonzero_eps,
-        "adam_lr": args.adam_lr,
-    })
+    train_cfg = dotdict(
+        {
+            "tensor_name": args.tensor_name,
+            "blowup_ratio": args.blowup_ratio,
+            "device": args.device,
+            "batch_size": args.batch_size,
+            "n_epochs": args.n_epochs,
+            "min_l1_penalty": args.min_l1_penalty,
+            "max_l1_penalty": args.max_l1_penalty,
+            "l1_penalty_spacing": args.l1_penalty_spacing,
+            "n_models": args.n_models,
+            "train_unsparse_baseline": args.train_unsparse_baseline,
+            "activation": args.activation,
+            "nonzero_eps": args.nonzero_eps,
+            "adam_lr": args.adam_lr,
+        }
+    )
 
-    log_cfg = dotdict({
-        "track_dead_feats": args.track_dead_feats,
-    })
+    log_cfg = dotdict(
+        {
+            "track_dead_feats": args.track_dead_feats,
+        }
+    )
 
-    files_cfg = dotdict({
-        "dataset_folder": args.dataset_folder,
-        "save_location": args.save_location,
-        "wandb_config": args.wandb_config,
-        "load_config": args.load_config,
-        "save_config": args.save_config,
-    })
+    files_cfg = dotdict(
+        {
+            "dataset_folder": args.dataset_folder,
+            "save_location": args.save_location,
+            "wandb_config": args.wandb_config,
+            "load_config": args.load_config,
+            "save_config": args.save_config,
+        }
+    )
 
     if files_cfg.load_config is not None:
         with open(files_cfg.load_config, "r") as f:
@@ -173,6 +185,7 @@ if __name__ == "__main__":
         wandb.login(key=wandb_cfg["api_key"])
 
         import datetime
+
         now = datetime.datetime.now()
         timestr = now.strftime("%Y-%m-%d_%H-%M")
 
@@ -180,7 +193,7 @@ if __name__ == "__main__":
             project=wandb_cfg["project"],
             entity=wandb_cfg["entity"],
             config=args.__dict__,
-            name=f"{wandb_cfg['run_name']}_{timestr}"
+            name=f"{wandb_cfg['run_name']}_{timestr}",
         )
 
     train_models(train_cfg, dataset_cfg, files_cfg, log_cfg)

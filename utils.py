@@ -5,16 +5,19 @@ import sys
 from pathlib import Path
 from typing import List, Optional, Union
 
+
 def load_vastnode_info():
     """Load the vastnode info from the json file."""
     with open("secrets/.vastnode", "r") as f:
         vastnode_info = json.load(f)
     return vastnode_info
 
+
 VAST_NUM = 0
 DEST_ADDR = f"root@ssh{VAST_NUM}.vast.ai"
 SSH_PYTHON = "/opt/conda/bin/python"
 PORT = 0
+
 
 def init_vastnode():
     """Initialise the vastnode."""
@@ -26,6 +29,7 @@ def init_vastnode():
     VAST_NUM = vastnode_info["vast_num"]
     PORT = vastnode_info["port"]
     DEST_ADDR = f"root@ssh{VAST_NUM}.vast.ai"
+
 
 USER = "aidan"
 
@@ -44,10 +48,12 @@ def sync():
     command = f'rsync -rv --filter ":- .gitignore" --exclude ".git" -e "ssh -p {PORT}" . {DEST_ADDR}:{SSH_DIRECTORY}'
     subprocess.call(command, shell=True)
 
+
 def connect():
     """SSH into the remote host."""
     command = f"ssh -p {PORT} {DEST_ADDR}"
     subprocess.call(command, shell=True)
+
 
 def datasets_sync():
     """Sync .csv files with the remote host."""
@@ -130,6 +136,7 @@ class dotdict(dict):
 
     def __delattr__(self, name):
         del self[name]
+
 
 if __name__ == "__main__":
     init_vastnode()

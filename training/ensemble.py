@@ -1,18 +1,20 @@
 import copy
+from typing import Type, Optional, Dict, Any, List, Union
 
 import torch
 from torch.func import stack_module_state, functional_call
 import torchopt
 
+
 class Ensemble:
     def __init__(
         self,
-        models,
-        optimizer_func,
-        optimizer_kwargs,
-        model_hyperparams,
-        device=None,
-        no_stacking=False,
+        models: List[torch.nn.Module],
+        optimizer_func: Type[torchopt.Optimizer],
+        optimizer_kwargs: Dict[str, Any],
+        model_hyperparams: Dict[str, Any],
+        device: Optional[Union[str, torch.device]] = None,
+        no_stacking: bool = False,
     ):
         if device is None:
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -20,7 +22,7 @@ class Ensemble:
         self.n_models = len(models)
         self.params, self.buffers = stack_module_state(models)
 
-        self.sig = copy.deepcopy(models[0]).to("meta")
+        self.sig = copy.deepcopy(models[0]).to("meta")  #
         self.no_stacking = no_stacking
 
         self.optimizer_func = optimizer_func
@@ -52,16 +54,17 @@ class Ensemble:
                 updates, new_opt_state (Dict[str, Any]): Updated tensors and optimizer state; ensemble dimension first.
         """
 
+        def call_single_model(params: Dict[str, Any], buffers: Dict[str, Any], batch):
             outputs = functional_call(self.sig, (params, buffers), batch)
             return outputs[0], outputs
 
-        def calc_grads(params, buffers, batch):
+        def calc_grads(params: Dict[str, Any], buffers: Dict[str, Any], batch):
             return torch.func.grad(call_single_model, has_aux=True)(params, buffers, batch)
 
         self.calc_grads = torch.vmap(calc_grads)
         self.update = torch.vmap(self.optimizer.update)
 
-    def unstack(self, device=None):
+    def unstack(self, device: Optional[Union[str, torch.device]] = None):
         if device is None:
             device = self.device
 
@@ -73,27 +76,27 @@ class Ensemble:
                 v.requires_grad_(True)
 
                 assert torch.allclose(v, self.params[k][i].to(device))
-            
-            for k, v in model.named_buffers():
-                setattr(model, k, self.buffers[k][i].clone())
 
-                assert torch.allclose(getattr(model, k), self.buffers[k][i].to(device))
+            for buffer_k, _ in model.named_buffers():
+                setattr(model, buffer_k, self.buffers[buffer_k][i].clone())
+
+                assert torch.allclose(getattr(model, buffer_k), self.buffers[buffer_k][i].to(device))
 
             yield model
 
-    def to_device(self, device):
+    def to_device(self, device: Union[str, torch.device]):
         self.device = device
 
         for t in self.params.values():
             t.to(device)
-        
+
         for t in self.buffers.values():
             t.to(device)
-        
+
         for t in self.optim_states.values():
             t.to(device)
 
-    def step_batch(self, minibatches, expand_dims=True):
+    def step_batch(self, minibatches, expand_dims: bool = True):
         with torch.no_grad():
             if expand_dims:
                 minibatches = minibatches.expand(self.n_models, *minibatches.shape)

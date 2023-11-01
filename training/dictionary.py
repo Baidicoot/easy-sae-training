@@ -4,7 +4,7 @@ import torch.nn as nn
 from torchtyping import TensorType
 
 import copy
-from typing import Literal, Callable
+from typing import Literal, Callable, Union, Optional, Dict, Any, List
 
 from torch.func import stack_module_state, vmap, functional_call
 
@@ -14,15 +14,18 @@ import training.ensemble as ens
 
 SOFTPLUS_BETA: int = 10_000_000
 
+_batch, _activation_size = None, None
+
+
 class SparseLinearAutoencoder(nn.Module):
     def __init__(
         self,
-        activation_size,
-        n_dict_components,
-        l1_penalty,
+        activation_size: int,
+        n_dict_components: int,
+        l1_penalty: float,
         activation: Literal["relu", "softplus"] = "relu",
-        device=None,
-        dtype=None,
+        device: Optional[Union[str, torch.device]] = None,
+        dtype: Optional[torch.dtype] = None,
     ):
         super().__init__()
         self.center = nn.Parameter(torch.zeros((activation_size,), device=device, dtype=dtype))
@@ -43,8 +46,8 @@ class SparseLinearAutoencoder(nn.Module):
             self.act = nn.Softplus(beta=SOFTPLUS_BETA)
 
         self.register_buffer("l1_penalty", torch.tensor(l1_penalty, device=device, dtype=dtype), persistent=True)
-    
-    def forward(self, batch):
+
+    def forward(self, batch: TensorType["_batch", "_activation_size"]):
         batch_ = batch - self.center[None, :]
 
         c = torch.einsum("nd,bd->bn", self.encoder, batch_)
@@ -63,10 +66,18 @@ class SparseLinearAutoencoder(nn.Module):
 
         bias_norm = torch.norm(self.encoder_bias, 2)
         center_norm = torch.norm(self.center, 2)
-        
+
         return l_reconstruction + l_l1, l_reconstruction, c, x_hat, bias_norm, center_norm
 
-def make_ensemble(input_dim, hidden_dim, l1_range, adam_settings, activation="relu", device="cuda"):
+
+def make_ensemble(
+    input_dim: int,
+    hidden_dim: int,
+    l1_range: List[float],
+    adam_settings: Dict[str, Any],
+    activation: str = "relu",
+    device: Union[str, torch.device] = "cuda",
+):
     # create a list of models
     models = []
     for l1_penalty in l1_range:
@@ -76,7 +87,12 @@ def make_ensemble(input_dim, hidden_dim, l1_range, adam_settings, activation="re
         models,
         optimizer_func=torchopt.adam,
         optimizer_kwargs=adam_settings,
-        model_hyperparams={"activation_size": input_dim, "n_dict_components": hidden_dim, "l1_penalty": 0, "activation": activation},
+        model_hyperparams={
+            "activation_size": input_dim,
+            "n_dict_components": hidden_dim,
+            "l1_penalty": 0,
+            "activation": activation,
+        },
     )
 
     return ensemble
